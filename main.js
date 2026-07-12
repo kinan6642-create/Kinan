@@ -269,16 +269,38 @@ ipcMain.handle('invoices:getAll', () => {
 });
 
 ipcMain.handle('invoices:add', (event, inv) => {
-  const insertInv = db.prepare(`INSERT INTO invoices
+  const insertInvSql = `INSERT INTO invoices
     (id, number, date, cashier, customer, customer_id, method, subtotal, discount, tax, final, received, change, note, returned)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`);
-  const insertLine = db.prepare(`INSERT INTO invoice_lines
-    (invoice_id, product_id, name, qty, unit_price, addons_total, addons_names, note) VALUES (?,?,?,?,?,?,?,?)`);
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`;
+  const insertInv = db.prepare(insertInvSql);
+  const insertLineSql = `INSERT INTO invoice_lines
+    (invoice_id, product_id, name, qty, unit_price, addons_total, addons_names, note) VALUES (?,?,?,?,?,?,?,?)`;
+  const insertLine = db.prepare(insertLineSql);
+
+  // تحقق ذاتي: عدد علامات (?) بالجملة يجب أن يطابق عدد القيم المُمررة بالضبط.
+  // لو صار أي تعارض هنا، نسجل تفاصيل كاملة (بدل خطأ عام غامض) قبل أن نحاول التنفيذ أصلاً.
+  const invValues = [inv.id, inv.number, inv.date, inv.cashier, inv.customer, inv.customerId || null, inv.method,
+    inv.subtotal, inv.discount, inv.tax, inv.final, inv.received, inv.change, inv.note || ''];
+  const expectedPlaceholders = (insertInvSql.match(/\?/g) || []).length;
+  if (invValues.length !== expectedPlaceholders) {
+    const detail = `عدد الأماكن المطلوبة بجملة SQL: ${expectedPlaceholders} | عدد القيم الفعلية: ${invValues.length}\n` +
+      `بيانات الفاتورة الكاملة كما وصلت من الواجهة:\n${JSON.stringify(inv, null, 2)}`;
+    logError('invoices:add - تعارض عدد القيم', detail);
+    throw new Error(`تعارض داخلي بعدد بيانات الفاتورة (مطلوب ${expectedPlaceholders}، وصل ${invValues.length}). تم تسجيل التفاصيل الكاملة في error-log.txt لمراجعتها.`);
+  }
+
   const txn = db.transaction(() => {
-    insertInv.run(inv.id, inv.number, inv.date, inv.cashier, inv.customer, inv.customerId || null, inv.method,
-      inv.subtotal, inv.discount, inv.tax, inv.final, inv.received, inv.change, inv.note || '');
+    insertInv.run(...invValues);
     (inv.lines || []).forEach(l => {
-      insertLine.run(inv.id, l.productId || null, l.name, l.qty, l.unitPrice, l.addonsTotal || 0, l.addonsNames || '', l.note || '');
+      const lineValues = [inv.id, l.productId || null, l.name, l.qty, l.unitPrice, l.addonsTotal || 0, l.addonsNames || '', l.note || ''];
+      const expectedLinePlaceholders = (insertLineSql.match(/\?/g) || []).length;
+      if (lineValues.length !== expectedLinePlaceholders) {
+        const detail = `عدد الأماكن المطلوبة لسطر الصنف: ${expectedLinePlaceholders} | عدد القيم الفعلية: ${lineValues.length}\n` +
+          `بيانات الصنف:\n${JSON.stringify(l, null, 2)}`;
+        logError('invoices:add (line) - تعارض عدد القيم', detail);
+        throw new Error(`تعارض داخلي بعدد بيانات صنف بالفاتورة. تم تسجيل التفاصيل الكاملة في error-log.txt لمراجعتها.`);
+      }
+      insertLine.run(...lineValues);
     });
   });
   txn();
