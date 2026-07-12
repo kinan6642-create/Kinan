@@ -1,0 +1,31 @@
+name: بناء ملف تثبيت الكاشير (Setup.exe)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: تنزيل الكود
+        uses: actions/checkout@v4
+
+      - name: تجهيز Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          architecture: 'x64'
+
+      - name: تثبيت المكتبات
+        run: npm install
+
+      - name: بناء ملفات Setup.exe (نسختي 32-bit و64-bit معاً)
+        run: npm run dist-win
+
+      - name: رفع ملفات التثبيت الجاهزة
+        uses: actions/upload-artifact@v4
+        with:
+          name: تثبيت-نظام-الكاشير-Setup
+          path: dist/*.exe
