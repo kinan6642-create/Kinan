@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
@@ -7,6 +7,18 @@ let mainWindow;
 let db;
 let backupTimer;
 let quitting = false;
+
+/* ---------------- تسجيل الأخطاء بملف (لتشخيص أي مشكلة لاحقاً) ---------------- */
+function logError(context, err) {
+  try {
+    const dir = app.getPath('userData');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const line = `[${new Date().toISOString()}] ${context}: ${err && err.stack ? err.stack : err}\n`;
+    fs.appendFileSync(path.join(dir, 'error-log.txt'), line);
+  } catch (e) { /* لا شيء يمكن فعله إذا فشل حتى تسجيل الخطأ */ }
+}
+process.on('uncaughtException', (err) => logError('uncaughtException', err));
+process.on('unhandledRejection', (err) => logError('unhandledRejection', err));
 
 /* ---------------- مسارات قاعدة البيانات والنسخ الاحتياطية ---------------- */
 function getDbPath() {
@@ -331,8 +343,19 @@ ipcMain.handle('backup:info', () => ({ dbPath: getDbPath(), backupsDir: getBacku
 
 /* ---------------- دورة حياة التطبيق ---------------- */
 app.whenReady().then(() => {
-  initDatabase();
-  migrateLegacyBlobsIfNeeded();
+  try {
+    initDatabase();
+    migrateLegacyBlobsIfNeeded();
+  } catch (err) {
+    logError('initDatabase', err);
+    dialog.showErrorBox(
+      'خطأ في تشغيل قاعدة البيانات',
+      'تعذّر تشغيل قاعدة البيانات، لذلك لن يعمل حفظ الفواتير أو الأصناف.\n\n' +
+      'الخطأ: ' + (err && err.message ? err.message : err) + '\n\n' +
+      'تفاصيل إضافية محفوظة في ملف error-log.txt داخل مجلد بيانات البرنامج.\n' +
+      'الحل المقترح: أعد تثبيت البرنامج (النسخة المطابقة لنظامك 32-bit أو 64-bit)، وتأكد من إغلاق أي نسخة أخرى من البرنامج مفتوحة.'
+    );
+  }
   createWindow();
 
   // نسخة احتياطية كل 6 ساعات أثناء تشغيل البرنامج

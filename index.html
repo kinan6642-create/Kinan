@@ -1189,6 +1189,17 @@ function toast(msg){
   clearTimeout(t._timer);
   t._timer = setTimeout(()=>t.classList.remove('show'), 1800);
 }
+/* معالج أخطاء عام: أي خطأ غير متوقع بأي مكان بالبرنامج يظهر تنبيه بدل ما "يتجمد" الزر بصمت */
+let _lastErrorShownAt = 0;
+function showFatalErrorOnce(msg){
+  const now = Date.now();
+  if(now - _lastErrorShownAt < 3000) return; // تجنّب تكرار نفس الرسالة عدة مرات متتالية
+  _lastErrorShownAt = now;
+  console.error(msg);
+  alert('⚠ حدث خطأ غير متوقع:\n\n' + msg + '\n\nإذا تكرر هذا الخطأ، أعد تشغيل البرنامج. وإذا استمر، تواصل مع الدعم الفني وأخبرهم بنص هذه الرسالة.');
+}
+window.addEventListener('error', (e)=>{ showFatalErrorOnce(e.message || String(e)); });
+window.addEventListener('unhandledrejection', (e)=>{ showFatalErrorOnce(e.reason && e.reason.message ? e.reason.message : String(e.reason)); });
 function fmtAgo(ts){
   const mins = Math.max(0, Math.round((Date.now()-ts)/60000));
   if(mins < 1) return 'الآن';
@@ -1657,31 +1668,37 @@ document.getElementById('payConfirmBtn').onclick = async ()=>{
     received: received, change: activePaymentMethod==='cash' ? (received-totals.final) : 0, note: globalNote,
     returned: false
   };
-  await deductInventoryForOrder(currentOrder);
-  await window.invoicesAPI.add(invoice);
-  invoices.unshift(invoice);
-  if(activePaymentMethod==='cash'){
-    logCashMovement('sale_cash', totals.final, 'in', 'فاتورة بيع رقم '+String(settings.invoiceCounter).padStart(4,'0'));
-    await saveCash();
-  } else if(activePaymentMethod==='card') {
-    cashMovements.unshift({ id: uid('mv'), type:'sale_card', amount: totals.final, direction:'in', note:'فاتورة بيع رقم '+String(settings.invoiceCounter).padStart(4,'0')+' (غير نقدي)', by: currentUser?currentUser.name:settings.cashierName, ts: Date.now(), nonCash:true });
-    await saveCash();
-  } else if(activePaymentMethod==='credit') {
-    creditCustomer.balance = Math.round(((creditCustomer.balance||0) + totals.final)*100)/100;
-    await saveCustomers();
-    renderCustomersTable();
+  try{
+    await deductInventoryForOrder(currentOrder);
+    await window.invoicesAPI.add(invoice);
+    invoices.unshift(invoice);
+    if(activePaymentMethod==='cash'){
+      logCashMovement('sale_cash', totals.final, 'in', 'فاتورة بيع رقم '+String(settings.invoiceCounter).padStart(4,'0'));
+      await saveCash();
+    } else if(activePaymentMethod==='card') {
+      cashMovements.unshift({ id: uid('mv'), type:'sale_card', amount: totals.final, direction:'in', note:'فاتورة بيع رقم '+String(settings.invoiceCounter).padStart(4,'0')+' (غير نقدي)', by: currentUser?currentUser.name:settings.cashierName, ts: Date.now(), nonCash:true });
+      await saveCash();
+    } else if(activePaymentMethod==='credit') {
+      creditCustomer.balance = Math.round(((creditCustomer.balance||0) + totals.final)*100)/100;
+      await saveCustomers();
+      renderCustomersTable();
+    }
+    settings.invoiceCounter += 1;
+    await saveCatalog();
+    document.getElementById('payModalBg').classList.remove('show');
+    renderTopbar();
+    showReceipt(invoice);
+    currentOrder = []; discount = 0; globalNote='';
+    renderOrder();
+    toast('تم تسجيل البيع بنجاح ✅');
+    renderInvoicesTable();
+    renderInventoryTable();
+    renderItems();
+  }catch(err){
+    console.error('فشل تسجيل الفاتورة', err);
+    alert('⚠ فشل تسجيل عملية الدفع!\n\nسبب الخطأ: ' + (err && err.message ? err.message : err) +
+      '\n\nملاحظة: لم يتم خصم أي شيء ولم تُسجَّل الفاتورة. جرّب مرة أخرى، وإذا تكرر الخطأ أعد تشغيل البرنامج.');
   }
-  settings.invoiceCounter += 1;
-  await saveCatalog();
-  document.getElementById('payModalBg').classList.remove('show');
-  renderTopbar();
-  showReceipt(invoice);
-  currentOrder = []; discount = 0; globalNote='';
-  renderOrder();
-  toast('تم تسجيل البيع بنجاح ✅');
-  renderInvoicesTable();
-  renderInventoryTable();
-  renderItems();
 };
 
 /* ---------------- HOLD ---------------- */
