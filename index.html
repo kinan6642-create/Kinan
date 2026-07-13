@@ -1696,7 +1696,7 @@ document.getElementById('payConfirmBtn').onclick = async ()=>{
     renderItems();
   }catch(err){
     console.error('فشل تسجيل الفاتورة', err);
-    alert('⚠ فشل تسجيل عملية الدفع!\n\nسبب الخطأ: ' + (err && err.message ? err.message : err) +
+    alert('⚠ فشل تسجيل عملية الدفع!\n\n[نسخة الواجهة: 2026-07-13-fix3]\n\nسبب الخطأ: ' + (err && err.message ? err.message : err) +
       '\n\nملاحظة: لم يتم خصم أي شيء ولم تُسجَّل الفاتورة. جرّب مرة أخرى، وإذا تكرر الخطأ أعد تشغيل البرنامج.');
   }
 };

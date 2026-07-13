@@ -198,13 +198,15 @@ async function runBackup() {
 }
 
 /* ---------------- النافذة الرئيسية ---------------- */
+const APP_BUILD_VERSION = '2026-07-13-fix3';
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 650,
-    title: 'نظام الكاشير - محل الساندويشات',
+    title: 'نظام الكاشير - محل الساندويشات (إصدار ' + APP_BUILD_VERSION + ')',
     icon: path.join(__dirname, 'icon.ico'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -269,42 +271,35 @@ ipcMain.handle('invoices:getAll', () => {
 });
 
 ipcMain.handle('invoices:add', (event, inv) => {
-  const insertInvSql = `INSERT INTO invoices
-    (id, number, date, cashier, customer, customer_id, method, subtotal, discount, tax, final, received, change, note, returned)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`;
-  const insertInv = db.prepare(insertInvSql);
-  const insertLineSql = `INSERT INTO invoice_lines
-    (invoice_id, product_id, name, qty, unit_price, addons_total, addons_names, note) VALUES (?,?,?,?,?,?,?,?)`;
-  const insertLine = db.prepare(insertLineSql);
+  try {
+    // نبني قائمة القيم أولاً، ثم نولّد عدد علامات (?) تلقائياً من طولها نفسه —
+    // بهذا الشكل يستحيل تقنياً أن يختلف عدد الأماكن الفاضية عن عدد القيم أبداً.
+    const invColumns = ['id','number','date','cashier','customer','customer_id','method',
+      'subtotal','discount','tax','final','received','change','note','returned'];
+    const invValues = [inv.id, inv.number, inv.date, inv.cashier, inv.customer, inv.customerId || null, inv.method,
+      inv.subtotal, inv.discount, inv.tax, inv.final, inv.received, inv.change, inv.note || '', inv.returned ? 1 : 0];
+    const invPlaceholders = invColumns.map(() => '?').join(',');
+    const insertInv = db.prepare(`INSERT INTO invoices (${invColumns.join(', ')}) VALUES (${invPlaceholders})`);
 
-  // تحقق ذاتي: عدد علامات (?) بالجملة يجب أن يطابق عدد القيم المُمررة بالضبط.
-  // لو صار أي تعارض هنا، نسجل تفاصيل كاملة (بدل خطأ عام غامض) قبل أن نحاول التنفيذ أصلاً.
-  const invValues = [inv.id, inv.number, inv.date, inv.cashier, inv.customer, inv.customerId || null, inv.method,
-    inv.subtotal, inv.discount, inv.tax, inv.final, inv.received, inv.change, inv.note || ''];
-  const expectedPlaceholders = (insertInvSql.match(/\?/g) || []).length;
-  if (invValues.length !== expectedPlaceholders) {
-    const detail = `عدد الأماكن المطلوبة بجملة SQL: ${expectedPlaceholders} | عدد القيم الفعلية: ${invValues.length}\n` +
-      `بيانات الفاتورة الكاملة كما وصلت من الواجهة:\n${JSON.stringify(inv, null, 2)}`;
-    logError('invoices:add - تعارض عدد القيم', detail);
-    throw new Error(`تعارض داخلي بعدد بيانات الفاتورة (مطلوب ${expectedPlaceholders}، وصل ${invValues.length}). تم تسجيل التفاصيل الكاملة في error-log.txt لمراجعتها.`);
-  }
+    const lineColumns = ['invoice_id','product_id','name','qty','unit_price','addons_total','addons_names','note'];
+    const linePlaceholders = lineColumns.map(() => '?').join(',');
+    const insertLine = db.prepare(`INSERT INTO invoice_lines (${lineColumns.join(', ')}) VALUES (${linePlaceholders})`);
 
-  const txn = db.transaction(() => {
-    insertInv.run(...invValues);
-    (inv.lines || []).forEach(l => {
-      const lineValues = [inv.id, l.productId || null, l.name, l.qty, l.unitPrice, l.addonsTotal || 0, l.addonsNames || '', l.note || ''];
-      const expectedLinePlaceholders = (insertLineSql.match(/\?/g) || []).length;
-      if (lineValues.length !== expectedLinePlaceholders) {
-        const detail = `عدد الأماكن المطلوبة لسطر الصنف: ${expectedLinePlaceholders} | عدد القيم الفعلية: ${lineValues.length}\n` +
-          `بيانات الصنف:\n${JSON.stringify(l, null, 2)}`;
-        logError('invoices:add (line) - تعارض عدد القيم', detail);
-        throw new Error(`تعارض داخلي بعدد بيانات صنف بالفاتورة. تم تسجيل التفاصيل الكاملة في error-log.txt لمراجعتها.`);
-      }
-      insertLine.run(...lineValues);
+    const txn = db.transaction(() => {
+      insertInv.run(...invValues);
+      (inv.lines || []).forEach(l => {
+        const lineValues = [inv.id, l.productId || null, l.name, l.qty, l.unitPrice, l.addonsTotal || 0, l.addonsNames || '', l.note || ''];
+        insertLine.run(...lineValues);
+      });
     });
-  });
-  txn();
-  return true;
+    txn();
+    return true;
+  } catch (err) {
+    // نسجل نسخة الإصدار + بيانات الفاتورة الكاملة + الخطأ الأصلي بالتفصيل، مهما كان سبب الفشل
+    logError(`invoices:add [إصدار الكود: ${APP_BUILD_VERSION}]`,
+      `${err && err.stack ? err.stack : err}\n\nبيانات الفاتورة كما وصلت:\n${JSON.stringify(inv, null, 2)}`);
+    throw err;
+  }
 });
 
 ipcMain.handle('invoices:markReturned', (event, id, returnedAt, returnedBy) => {
